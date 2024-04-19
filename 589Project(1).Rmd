@@ -1,0 +1,237 @@
+---
+title: "589Project"
+author: "Shiyi Chen"
+date: "2024-04-17"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(spatstat)
+library(sf)
+library(sp)
+library(raster)
+library(ggplot2)
+
+coho <- read.delim('Coho_Salmon.csv')
+load('BC_Covariates.Rda')
+
+# Clean the data
+coho_cleaned <- coho[
+  !is.na(coho$decimalLongitude) & 
+  (coho$decimalLatitude) > 46 & 
+  (coho$decimalLatitude) < 60 &
+  toupper(coho$stateProvince) %in% c('BRITISH COLUMBIA', 'BC', 'BRITISH COLUMBIA (PROV.)'),
+  c("decimalLatitude", "decimalLongitude", "depth", "year", "month", "day", "eventDate")]
+
+# Convert the cleaned data to an 'sf' object
+coho_sf <- st_as_sf(coho_cleaned, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326, remove = FALSE)
+
+# Convert the 'Window' (SpatialPolygons) to an 'sf' object
+bc_window_sf <- st_as_sf(DATA$Window, crs = 4326)
+
+# Visualization
+ggplot() +
+  geom_sf(data = bc_window_sf, fill = "white", color = "black") +
+  geom_sf(data = coho_sf, size = 1, color = 'darkblue', alpha = 0.5) +
+  labs(title = "Spatial Distribution of Coho Salmon Occurrences", x = "Longitude", y = "Latitude") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 12), 
+        axis.title = element_text(size = 14),
+        title = element_text(size = 16))
+
+```
+# create ppp object
+```{r}
+library(spatstat.geom)
+
+bbox <- st_bbox(coho_sf)
+w <- owin(xrange = c(bbox$xmin, bbox$xmax), yrange = c(bbox$ymin, bbox$ymax))
+coho_ppp <- ppp(x = st_coordinates(coho_sf)[,1],
+                y = st_coordinates(coho_sf)[,2],
+                window = w)
+plot(coho_ppp)
+
+```
+# quadrat counting
+```{r}
+Q <- quadratcount(coho_ppp,
+                  nx = 10,
+                  ny = 10)
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
+#Plot the output 
+plot(coho_ppp,
+     pch = 16,
+     cex = 0.5,
+     cols = "#046C9A",
+     main = "Coho salmon locations")
+
+plot(Q, cex = 1, col = "red", add = T)
+intensity(Q)
+```
+# plot the intensity
+```{r}
+plot(intensity(Q, image = T),
+     main = "Soho Salmon Intensity")
+
+plot(coho_ppp,
+     pch = 16,
+     cex = 0.6,
+     cols = "white",
+     add = T)
+
+plot(coho_ppp,
+     pch = 16,
+     cex = 0.5,
+     cols = "black",
+     add = T)
+```
+# Quadrat test of homogeneity 
+```{r}
+quadrat.test(Q)
+```
+The small p-value suggests that there is a significant deviation from homogeneity.
+
+# Kernel estimation
+```{r}
+#Density estimation of lambda(u)
+lambda_u_hat <- density(coho_ppp)
+
+#Plot the output Note the use of image = TRUE
+plot(lambda_u_hat,
+     main = "Kernel estimate of Coho salmon intensity")
+
+plot(coho_ppp,
+     pch = 16,
+     cex = 0.6,
+     cols = "white",
+     add = T)
+
+plot(coho_ppp,
+     pch = 16,
+     cex = 0.5,
+     cols = "black",
+     add = T)
+```
+```{r}
+# Note the sensitivity of the estimated intensity to the bandwidth optimiser
+par(mfrow = c(1,2), mar = rep(0.1,4))
+plot(density(coho_ppp, sigma = bw.diggle), # Cross Validation Bandwidth Selection
+     ribbon = F,
+     main = "") 
+plot(density(coho_ppp, sigma = bw.ppl),  # Likelihood Cross Validation Bandwidth Selection
+     ribbon = F,
+     main = "")
+```
+```{r}
+#Density estimation of lambda(u)
+lambda_u_hat_adaptive <- adaptive.density(coho_ppp, method = "kernel")
+
+#Plot the output Note the use of image = TRUE
+plot(lambda_u_hat_adaptive,
+     main = "Adaptive kernel estimate of intensity")
+
+
+```
+# Hot spot analysis
+```{r}
+# Estimate R
+R <- bw.ppl(coho_ppp)
+
+#Calculate test statistic
+LR <- scanLRTS(coho_ppp, r = R)
+
+#Plot the output 
+plot(LR)
+
+```
+```{r}
+#Compute local p-values
+pvals <- eval.im(pchisq(LR,
+                        df = 1,
+                        lower.tail = FALSE))
+
+
+#Plot the output
+plot(pvals, main = "Local p-values")
+```
+# Relationships with covariates
+```{r}
+#Extract Dist_water information
+dis_water <- DATA$Dist_Water
+
+#Estimate Rho
+# rho <- rhohat(coho_ppp, dis_water)
+
+plot(rho)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+forest <- DATA$Forest
+forest_raster <- raster(forest)
+forest_df <- as.data.frame(forest_raster, xy = TRUE)
+
+HFI <- DATA$HFI
+HFI_raster <- raster(HFI)
+HFI_df <- as.data.frame(HFI_raster, xy = TRUE)
+
+dist_water <- DATA$Dist_Water
+dist_water_raster <- raster(dist_water)
+dist_water_df <- as.data.frame(dist_water_raster, xy = TRUE)
+
+```
+
+
+
+```{r}
+library(viridis)
+dept <- DATA$Dist_Water
+matrix <- t(dept$v)
+x <- seq(dept$xrange[1], dept$xrange[2], length.out =dept$dim[2])
+y <- seq(dept$yrange[1], dept$yrange[2], length.out = dept$dim[1])
+z <- matrix
+
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
+fig <- persp(x, y, z,, # source data
+             theta = 0, phi = 45, # rotation
+             expand = 0.2, # z-axis expansion
+             border = NA, #remove grid borders
+             ltheta = -100,
+             shade = 0.5,
+             box = FALSE,
+             ticktype = "detailed",
+             xlab = "X Coordinate",
+             ylab = "Y Coordinate",
+             zlab = "Elevation",
+             main = "Soho Salmon Occurence with Distance from Water",
+             cex.axis = 0.7,
+             cex.lab = 0.7,
+             cex.main = 1.2,
+             cex.sub = 1,
+             col = viridis(100))
+
+perspPoints(coho_ppp, Z = elev, M = fig, pch = 16, cex = 0.5, col = "red")
+```
+
+
