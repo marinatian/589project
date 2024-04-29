@@ -1,8 +1,10 @@
 ---
 title: "589Project"
-author: "Shiyi Chen"
+author: "Shiyi Chen,Marina Tian,Hanwen Zhang"
 date: "2024-04-17"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -21,7 +23,11 @@ library(sf)
 library(sp)
 library(raster)
 library(ggplot2)
+library(spatstat.explore)
+```
 
+# 1. Loading and Cleaning Data
+```{r}
 coho <- read.delim('Coho_Salmon.csv')
 load('BC_Covariates.Rda')
 
@@ -32,12 +38,16 @@ coho_cleaned <- coho[
   (coho$decimalLatitude) < 60 &
   toupper(coho$stateProvince) %in% c('BRITISH COLUMBIA', 'BC', 'BRITISH COLUMBIA (PROV.)'),
   c("decimalLatitude", "decimalLongitude", "depth", "year", "month", "day", "eventDate")]
+```
 
+# 2. Spatial Transformations
+```{r}
 # Convert the cleaned data to an 'sf' object
 coho_sf <- st_as_sf(coho_cleaned, coords = c("decimalLongitude", "decimalLatitude"), crs = 4326, remove = FALSE)
 
 # Convert the 'Window' (SpatialPolygons) to an 'sf' object
-bc_window_sf <- st_as_sf(DATA$Window, crs = 4326)
+bc_window_sf <- st_as_sf(DATA$Window)
+bc_window_sf <- st_transform(bc_window_sf, crs = 4326)
 
 # Visualization
 ggplot() +
@@ -50,25 +60,34 @@ ggplot() +
         title = element_text(size = 16))
 
 ```
-# create ppp object
+
+# 3. Creating Spatial Objects
 ```{r}
 library(spatstat.geom)
 
-bbox <- st_bbox(coho_sf)
-w <- owin(xrange = c(bbox$xmin, bbox$xmax), yrange = c(bbox$ymin, bbox$ymax))
-coho_ppp <- ppp(x = st_coordinates(coho_sf)[,1],
-                y = st_coordinates(coho_sf)[,2],
-                window = w)
-plot(coho_ppp)
+# Transform both the point data and the window to the projected CRS
+coho_sf_projected <- st_transform(coho_sf, crs = 26910)
+bc_window_sf_projected <- st_transform(bc_window_sf, crs = 26910)
 
+# Convert the transformed window to a spatstat window
+window_owin <- as.owin(bc_window_sf_projected)
+
+# Now create the ppp object with projected coordinates
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
+coho_ppp <- ppp(x = st_coordinates(coho_sf_projected)[,1],
+                y = st_coordinates(coho_sf_projected)[,2],
+                window = window_owin)
+plot(coho_ppp)
 ```
-# quadrat counting
+
+# 4. Quadrat counting
 ```{r}
 Q <- quadratcount(coho_ppp,
                   nx = 10,
                   ny = 10)
+
+#Plot the output
 par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
-#Plot the output 
 plot(coho_ppp,
      pch = 16,
      cex = 0.5,
@@ -78,8 +97,10 @@ plot(coho_ppp,
 plot(Q, cex = 1, col = "red", add = T)
 intensity(Q)
 ```
-# plot the intensity
+
+# 5. Plot the intensity
 ```{r}
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
 plot(intensity(Q, image = T),
      main = "Soho Salmon Intensity")
 
@@ -95,18 +116,21 @@ plot(coho_ppp,
      cols = "black",
      add = T)
 ```
-# Quadrat test of homogeneity 
+
+# 6. Quadrat test of homogeneity 
 ```{r}
 quadrat.test(Q)
 ```
 The small p-value suggests that there is a significant deviation from homogeneity.
 
-# Kernel estimation
+# 7. Kernel estimation
 ```{r}
 #Density estimation of lambda(u)
 lambda_u_hat <- density(coho_ppp)
 
 #Plot the output Note the use of image = TRUE
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
+
 plot(lambda_u_hat,
      main = "Kernel estimate of Coho salmon intensity")
 
@@ -122,27 +146,26 @@ plot(coho_ppp,
      cols = "black",
      add = T)
 ```
+
+# 8. Cross Validation Bandwidth Selection
 ```{r}
-# Note the sensitivity of the estimated intensity to the bandwidth optimiser
-par(mfrow = c(1,2), mar = rep(0.1,4))
-plot(density(coho_ppp, sigma = bw.diggle), # Cross Validation Bandwidth Selection
-     ribbon = F,
-     main = "") 
-plot(density(coho_ppp, sigma = bw.ppl),  # Likelihood Cross Validation Bandwidth Selection
-     ribbon = F,
-     main = "")
+bw.diggle <- bw.diggle(coho_ppp)
+bw.ppl <- bw.ppl(coho_ppp)
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
+plot(density(coho_ppp, sigma = bw.diggle), ribbon = FALSE, main = "Diggle's Method")
+plot(density(coho_ppp, sigma = bw.ppl), ribbon = FALSE, main = "PPL's Method")
 ```
+
+# 9. Density estimation of lambda(u)
 ```{r}
-#Density estimation of lambda(u)
 lambda_u_hat_adaptive <- adaptive.density(coho_ppp, method = "kernel")
 
-#Plot the output Note the use of image = TRUE
+par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
 plot(lambda_u_hat_adaptive,
      main = "Adaptive kernel estimate of intensity")
-
-
 ```
-# Hot spot analysis
+
+# 10. Hot spot analysis
 ```{r}
 # Estimate R
 R <- bw.ppl(coho_ppp)
@@ -150,12 +173,12 @@ R <- bw.ppl(coho_ppp)
 #Calculate test statistic
 LR <- scanLRTS(coho_ppp, r = R)
 
-#Plot the output 
+#Plot the output
 plot(LR)
-
 ```
+
+# 11. Compute local p-values
 ```{r}
-#Compute local p-values
 pvals <- eval.im(pchisq(LR,
                         df = 1,
                         lower.tail = FALSE))
@@ -164,74 +187,131 @@ pvals <- eval.im(pchisq(LR,
 #Plot the output
 plot(pvals, main = "Local p-values")
 ```
-# Relationships with covariates
+
+# 12. Pair Correlation Function
 ```{r}
-#Extract Dist_water information
-dis_water <- DATA$Dist_Water
-
-#Estimate Rho
-# rho <- rhohat(coho_ppp, dis_water)
-
-plot(rho)
-```
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-
-forest <- DATA$Forest
-forest_raster <- raster(forest)
-forest_df <- as.data.frame(forest_raster, xy = TRUE)
-
-HFI <- DATA$HFI
-HFI_raster <- raster(HFI)
-HFI_df <- as.data.frame(HFI_raster, xy = TRUE)
-
-dist_water <- DATA$Dist_Water
-dist_water_raster <- raster(dist_water)
-dist_water_df <- as.data.frame(dist_water_raster, xy = TRUE)
+pcf_coho <- pcf(coho_ppp)
+plot(pcf_coho)
 
 ```
+In the plot, the pair correlation function drops sharply at very small distances and quickly approaches the line representing complete spatial randomness. This suggests that:
+1. At very short distances, there is a strong inhibition effect -- points are less likely to be found very close to each other, which could be due to territorial behavior, resource competition, or physical space limitations.
+2. At larger distances (beyond where g(r) approaches 1), the distribution of points does not significantly deviate from what would be expected by chance (assuming a Poisson process). In other words, there is no strong evidence of clustering or dispersion at these scales.
 
+```{r}
+# visualise the results
+plot(pcf_coho,
+     theo ~ r,
+     ylim = c(0,700),
+     main = "",
+     col = "grey70",
+     lwd = 2,
+     lty = "dashed")
+
+plot(pcf_coho,
+     iso ~ r,
+     col = c("#046C9A"),
+     lwd = 2,
+     add = T)
+```
+The estimator of the pair correlation function also assumes homogeneity. Here again, we can relax this assumption via the pcfinhom() function.
+```{r}
+# Estimate g corrected for inhomogeneity
+g_inhom <- pcfinhom(coho_ppp)
+```
+```{r}
+# visualise the results
+plot(g_inhom,
+     theo ~ r,
+     ylim = c(0,250),
+     main = "",
+     col = "grey70",
+     lwd = 2,
+     lty = "dashed")
+
+plot(g_inhom,
+     iso ~ r,
+     col = c("#046C9A"),
+     lwd = 2,
+     add = T)
+```
+The Sharp Peak at the Beginning: The plot shows a very high value of g inhom(r) at very small distances, which rapidly decreases to values below 1. This peak suggests an extremely high level of local clustering at small scales. It could indicate that points (e.g., Coho salmon observations) are much more likely to be found in close proximity to each other than expected under an inhomogeneous Poisson process at these distances.
+Below the Line of Randomness: As the value of g inhom(r) drops below 1, it indicates inhibition or regularity, meaning that points are less likely to be found at these distances compared to a random pattern. In ecological terms, this could suggest some form of territorial behavior, environmental constraints, or other mechanisms that lead to regular spacing among individuals beyond the initial clustering distance.
+Returning Towards Randomness: The function seems to approach the dashed line (which typically represents g(r)=1) as r increases. If g inhom(r) stabilizes at 1 for larger distances, it would suggest that the points are randomly distributed at these larger scales when accounting for inhomogeneity.
+
+# 13. Morisita's Index
+```{r}
+# define a rectangular window for Morisita's Index
+bbox <- st_bbox(coho_sf)
+w <- owin(xrange = c(bbox$xmin, bbox$xmax), yrange = c(bbox$ymin, bbox$ymax))
+coho_ppp_rect <- ppp(x = st_coordinates(coho_sf)[,1],
+                y = st_coordinates(coho_sf)[,2],
+                window = w)
+
+miplot(coho_ppp_rect, ylim = c(0, 1600), main = "", pch = 16, col = "#046C9A")
+```
+Extreme Clumping at Small Scales: The very high Morisita's Index values at small quadrat sizes suggest that Coho salmon are extremely clumped or aggregated at these scales. This could be reflective of spawning behavior, where Coho salmon congregate in specific areas that provide suitable conditions for laying eggs. It might also indicate areas of high habitat quality where salmon prefer to stay, such as regions with ample food supply, appropriate substrate for spawning, or optimal water temperatures.
+
+Steep Decline in Index with Quadrat Size: As the size of the quadrats increases, the index rapidly decreases, indicating that the clumping is not as intense over larger areas. This could mean that while Coho salmon are very likely to be found close together in small, localized areas (e.g., specific parts of a stream or river), they are more evenly distributed when you consider larger stretches of habitat. This pattern is consistent with the behavior of salmon which may have specific, localized spawning sites but are more dispersed across their overall range.
+
+Stabilization of the Index: For larger quadrat sizes, where the Morisita's Index values approach and just exceed 1, the spatial distribution of salmon begins to resemble a random pattern. This transition from clumped to a seemingly random distribution at larger scales may suggest that across the broader regions of British Columbia, Coho salmon do not show strong preferential clustering; instead, their distribution is dictated by the availability of suitable habitats scattered throughout the region.
+
+Biological and Environmental Implications: The results may be significant for conservation and management strategies. The initial high clumping could inform biologists and conservationists about critical areas that need protection, especially during the spawning season. This might include protecting specific streams or river segments, managing human activities such as fishing and development, and monitoring water quality and flow conditions.
+
+Consideration of Scale: The fact that the index stabilizes around 1 at larger quadrat sizes is also informative for resource management. It suggests that at the scale of larger river systems or multiple stream networks, Coho salmon might not exhibit strong patterns of aggregation, perhaps due to the vastness and variability of available habitats.
+
+# 14. Ripley’s K-function
+```{r}
+#Estimate the empirical k-function
+k_coho <- Kest(coho_ppp)
+
+#Display the object
+k_coho
+
+#visualise the results
+plot(k_coho,
+     main = "",
+     lwd = 2)
+```
+Comparison to Randomness: The solid black line is well above the blue dash-dotted line, especially at smaller values of r. This suggests that Coho salmon exhibit a much more clustered distribution than would be expected if they were randomly distributed within the study area. This could be due to environmental factors, social behavior, or habitat preferences that cause the salmon to cluster in certain areas.
+Edge Effects: The difference between the black, red, and green lines indicates the impact of edge corrections on the estimation of spatial clustering. The fact that these lines are distinct but follow a similar trend suggests that edge effects are indeed present in the data but that the general pattern of clustering is robust to these effects.
+Scale of Clustering: The degree of clustering (indicated by the steepness of the black line) seems to increase with distance at smaller scales, leveling off as the distance increases. This might mean that Coho salmon tend to form groups or clusters at certain scales, perhaps corresponding to suitable habitat features or social behaviors like schooling.
 
 
 ```{r}
-library(viridis)
-dept <- DATA$Dist_Water
-matrix <- t(dept$v)
-x <- seq(dept$xrange[1], dept$xrange[2], length.out =dept$dim[2])
-y <- seq(dept$yrange[1], dept$yrange[2], length.out = dept$dim[1])
-z <- matrix
-
+# Bootstrapped CIs
+# rank = 1 means the max and min
+# Border correction is to correct for edges around the window
+# values will be used for CI
+E_coho <- envelope(coho_ppp,
+                  Kest,
+                  correction="border",
+                  rank = 1,
+                  nsim = 19,
+                  fix.n = T)
+# visualise the results
 par(plt = c(0.1, 1.9, 0.1, 1.9), mar = c(0.5, 0.5, 0.4, 0.4) + 0.1)
-fig <- persp(x, y, z,, # source data
-             theta = 0, phi = 45, # rotation
-             expand = 0.2, # z-axis expansion
-             border = NA, #remove grid borders
-             ltheta = -100,
-             shade = 0.5,
-             box = FALSE,
-             ticktype = "detailed",
-             xlab = "X Coordinate",
-             ylab = "Y Coordinate",
-             zlab = "Elevation",
-             main = "Soho Salmon Occurence with Distance from Water",
-             cex.axis = 0.7,
-             cex.lab = 0.7,
-             cex.main = 1.2,
-             cex.sub = 1,
-             col = viridis(100))
-
-perspPoints(coho_ppp, Z = elev, M = fig, pch = 16, cex = 0.5, col = "red")
+plot(E_coho,
+     main = "",
+     lwd = 2)
 ```
 
+Initial Values: At the smallest distances, the observed K-function follows closely to the theoretical line, suggesting that within very small distances, the distribution of salmon might not differ significantly from randomness.
+Deviation from Randomness: As distance increases, the observed K-function diverges from the theoretical line, rising above the upper confidence bound. This indicates clustering of Coho salmon at those scales, which means salmon are more aggregated than would be expected if they were randomly distributed.
+Confidence Intervals: The fact that the observed line moves outside the confidence envelope at larger distances reinforces the suggestion of non-random clustering. The broader the gray envelope, the greater the uncertainty about the pattern at that scale, likely due to the variability in bootstrapped simulations.
+Ecological Insight: For Coho salmon in British Columbia, this could imply that environmental factors or biological behaviors lead to aggregation at certain spatial scales. This could be driven by habitat preferences, spawning behaviors, or other ecological interactions.
 
+```{r}
+# Bootstrapped CIs
+E_coho_99 <- envelope(coho_ppp,
+                     Kest,
+                     correction="border",
+                     rank = 1,
+                     nsim = 99,
+                     fix.n = T)
+
+# visualise the results
+plot(E_coho_99,
+     main = "",
+     lwd = 2)
+```
